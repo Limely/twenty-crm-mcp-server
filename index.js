@@ -737,6 +737,10 @@ export class TwentyCRMServer {
 
     const { byName, byAlias } = this.getRelationInfo(schema);
     const linksFields = this.getLinksFieldNames(schema);
+    const emailsFields = this.getEmailsFieldNames(schema);
+    const phonesFields = this.getPhonesFieldNames(schema);
+    const addressFields = this.getAddressFieldNames(schema);
+
     const sanitized = {};
     for (const [key, value] of Object.entries(payload)) {
       if (value === undefined) continue;
@@ -759,6 +763,21 @@ export class TwentyCRMServer {
 
       if (linksFields.has(key)) {
         sanitized[key] = this.normalizeLinksValue(value);
+        continue;
+      }
+
+      if (emailsFields.has(key)) {
+        sanitized[key] = this.normalizeEmailsValue(value);
+        continue;
+      }
+
+      if (phonesFields.has(key)) {
+        sanitized[key] = this.normalizePhonesValue(value);
+        continue;
+      }
+
+      if (addressFields.has(key)) {
+        sanitized[key] = this.normalizeAddressValue(value);
         continue;
       }
 
@@ -806,6 +825,54 @@ export class TwentyCRMServer {
     return linksFields;
   }
 
+  getEmailsFieldNames(schema) {
+    const emailsFields = new Set();
+
+    if (!schema?.fieldMetadata) {
+      return emailsFields;
+    }
+
+    schema.fieldMetadata.forEach(field => {
+      if (field.type === 'EMAILS') {
+        emailsFields.add(field.name);
+      }
+    });
+
+    return emailsFields;
+  }
+
+  getPhonesFieldNames(schema) {
+    const phonesFields = new Set();
+
+    if (!schema?.fieldMetadata) {
+      return phonesFields;
+    }
+
+    schema.fieldMetadata.forEach(field => {
+      if (field.type === 'PHONES') {
+        phonesFields.add(field.name);
+      }
+    });
+
+    return phonesFields;
+  }
+
+  getAddressFieldNames(schema) {
+    const addressFields = new Set();
+
+    if (!schema?.fieldMetadata) {
+      return addressFields;
+    }
+
+    schema.fieldMetadata.forEach(field => {
+      if (field.type === 'ADDRESS') {
+        addressFields.add(field.name);
+      }
+    });
+
+    return addressFields;
+  }
+
   normalizeLinksValue(value) {
     if (value === null || value === undefined) {
       return value;
@@ -833,6 +900,170 @@ export class TwentyCRMServer {
         primaryLinkUrl: trimmed,
         primaryLinkLabel: '',
         secondaryLinks: null
+      };
+    }
+
+    // Return as-is for other types (let API validation handle it)
+    return value;
+  }
+
+  normalizeEmailsValue(value) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    // If it's already an object with the correct structure, return as-is
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      if ('primaryEmail' in value || 'additionalEmails' in value) {
+        return value;
+      }
+    }
+
+    // If it's a simple string (email), convert to EMAILS structure
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return {
+        primaryEmail: trimmed,
+        additionalEmails: null
+      };
+    }
+
+    // If it's an array, take first as primary, rest as additional
+    if (Array.isArray(value)) {
+      const emails = value.filter(e => e && (typeof e === 'string' || typeof e === 'object'));
+      if (emails.length === 0) {
+        return {
+          primaryEmail: '',
+          additionalEmails: null
+        };
+      }
+
+      const primary = typeof emails[0] === 'string' ? emails[0].trim() : (emails[0].value || emails[0].primaryEmail || '');
+      const additional = emails.slice(1).map(e =>
+        typeof e === 'string' ? { value: e.trim(), type: 'other' } : e
+      );
+
+      return {
+        primaryEmail: primary,
+        additionalEmails: additional.length > 0 ? additional : null
+      };
+    }
+
+    // Return as-is for other types (let API validation handle it)
+    return value;
+  }
+
+  normalizePhonesValue(value) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    // If it's already an object with the correct structure, return as-is
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      if ('primaryPhoneNumber' in value || 'primaryPhoneCallingCode' in value || 'primaryPhoneCountryCode' in value || 'additionalPhones' in value) {
+        return value;
+      }
+    }
+
+    // If it's a simple string (phone number), convert to PHONES structure
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return {
+        primaryPhoneNumber: trimmed,
+        primaryPhoneCallingCode: '',
+        primaryPhoneCountryCode: '',
+        additionalPhones: null
+      };
+    }
+
+    // If it's an array, take first as primary, rest as additional
+    if (Array.isArray(value)) {
+      const phones = value.filter(p => p && (typeof p === 'string' || typeof p === 'object'));
+      if (phones.length === 0) {
+        return {
+          primaryPhoneNumber: '',
+          primaryPhoneCallingCode: '',
+          primaryPhoneCountryCode: '',
+          additionalPhones: null
+        };
+      }
+
+      const primary = phones[0];
+      let primaryNumber = '';
+      let primaryCallingCode = '';
+      let primaryCountryCode = '';
+
+      if (typeof primary === 'string') {
+        primaryNumber = primary.trim();
+      } else {
+        primaryNumber = primary.number || primary.value || primary.primaryPhoneNumber || '';
+        primaryCallingCode = primary.callingCode || primary.primaryPhoneCallingCode || '';
+        primaryCountryCode = primary.countryCode || primary.primaryPhoneCountryCode || '';
+      }
+
+      const additional = phones.slice(1).map(p => {
+        if (typeof p === 'string') {
+          return { number: p.trim(), callingCode: '', countryCode: '', type: 'other' };
+        }
+        return {
+          number: p.number || p.value || '',
+          callingCode: p.callingCode || '',
+          countryCode: p.countryCode || '',
+          type: p.type || 'other'
+        };
+      });
+
+      return {
+        primaryPhoneNumber: primaryNumber,
+        primaryPhoneCallingCode: primaryCallingCode,
+        primaryPhoneCountryCode: primaryCountryCode,
+        additionalPhones: additional.length > 0 ? additional : null
+      };
+    }
+
+    // Return as-is for other types (let API validation handle it)
+    return value;
+  }
+
+  normalizeAddressValue(value) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    // If it's already an object with the correct structure, return as-is
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      // Check if it has Twenty CRM address format
+      if ('addressStreet1' in value || 'addressCity' in value || 'addressCountry' in value) {
+        return value;
+      }
+
+      // Check if it has standard address format and convert
+      if ('street1' in value || 'addressLine1' in value || 'city' in value || 'street' in value) {
+        return {
+          addressStreet1: value.street1 || value.addressLine1 || value.street || '',
+          addressStreet2: value.street2 || value.addressLine2 || '',
+          addressCity: value.city || '',
+          addressState: value.state || value.region || '',
+          addressPostcode: value.postcode || value.postalCode || value.zip || '',
+          addressCountry: value.country || '',
+          addressLat: value.lat || value.latitude || null,
+          addressLng: value.lng || value.longitude || null
+        };
+      }
+    }
+
+    // If it's a simple string, put it in street1
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return {
+        addressStreet1: trimmed,
+        addressStreet2: '',
+        addressCity: '',
+        addressState: '',
+        addressPostcode: '',
+        addressCountry: '',
+        addressLat: null,
+        addressLng: null
       };
     }
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1 (Unreleased)
+
+### Fixed
+- **BREAKING FIX**: Corrected field schemas for EMAILS, PHONES, and ADDRESS to match Twenty CRM's actual API structure
+  - EMAILS now uses `primaryEmail` and `additionalEmails` structure instead of array
+  - PHONES now uses `primaryPhoneNumber`, `primaryPhoneCallingCode`, `primaryPhoneCountryCode`, and `additionalPhones` structure instead of array
+  - ADDRESS now uses Twenty's prefixed property names (`addressStreet1`, `addressCity`, `addressPostcode`, etc.) instead of standard names (`street1`, `city`, `postalCode`, etc.)
+- Added automatic normalization for EMAILS, PHONES, ADDRESS, and LINKS fields so simple values (strings) are automatically converted to the correct structure
+  - Email string → `{ primaryEmail: "...", additionalEmails: null }`
+  - Phone string → `{ primaryPhoneNumber: "...", primaryPhoneCallingCode: "", primaryPhoneCountryCode: "", additionalPhones: null }`
+  - Address string → `{ addressStreet1: "...", addressCity: "", ... }`
+  - URL string → `{ primaryLinkUrl: "...", primaryLinkLabel: "", secondaryLinks: null }`
+- Added support for converting standard address formats (street1, city, postalCode) to Twenty's format automatically
+
 ## 0.2.0
 - Added automatic schema discovery (uses `./schema` export by default, still respects `SCHEMA_PATH`)
 - Generate CRUD tools dynamically from exported metadata, including required fields and defaults

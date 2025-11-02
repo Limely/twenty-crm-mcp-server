@@ -258,12 +258,14 @@ export class SchemaLoader {
       case 'ADDRESS':
         property.type = 'object';
         property.properties = {
-          addressLine1: { type: 'string', description: 'Primary address line' },
-          addressLine2: { type: 'string', description: 'Secondary address line' },
-          city: { type: 'string', description: 'City or locality' },
-          state: { type: 'string', description: 'State or region' },
-          postalCode: { type: 'string', description: 'Postal or ZIP code' },
-          country: { type: 'string', description: 'Country code or name' }
+          addressStreet1: { type: 'string', description: 'Primary address line' },
+          addressStreet2: { type: 'string', description: 'Secondary address line' },
+          addressCity: { type: 'string', description: 'City or locality' },
+          addressState: { type: 'string', description: 'State or region' },
+          addressPostcode: { type: 'string', description: 'Postal or ZIP code' },
+          addressCountry: { type: 'string', description: 'Country code or name' },
+          addressLat: { type: 'number', description: 'Latitude coordinate' },
+          addressLng: { type: 'number', description: 'Longitude coordinate' }
         };
         property.additionalProperties = false;
         break;
@@ -329,17 +331,46 @@ export class SchemaLoader {
         }
         break;
       case 'EMAILS':
-      case 'PHONES':
-        property.type = 'array';
-        property.items = {
-          type: 'object',
-          properties: {
-            value: { type: 'string', description: 'Contact value' },
-            type: { type: 'string', description: 'Type label or category' },
-            primary: { type: 'boolean', description: 'Whether this is the primary contact value' }
-          },
-          additionalProperties: true
+        property.type = 'object';
+        property.properties = {
+          primaryEmail: { type: 'string', description: 'Primary email address' },
+          additionalEmails: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                value: { type: 'string', description: 'Email address' },
+                type: { type: 'string', description: 'Email type (work, personal, etc.)' }
+              },
+              additionalProperties: true
+            },
+            description: 'Additional email addresses'
+          }
         };
+        property.additionalProperties = true;
+        break;
+      case 'PHONES':
+        property.type = 'object';
+        property.properties = {
+          primaryPhoneNumber: { type: 'string', description: 'Primary phone number' },
+          primaryPhoneCallingCode: { type: 'string', description: 'Primary phone calling code' },
+          primaryPhoneCountryCode: { type: 'string', description: 'Primary phone country code (e.g., US, CH)' },
+          additionalPhones: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                number: { type: 'string', description: 'Phone number' },
+                callingCode: { type: 'string', description: 'Calling code' },
+                countryCode: { type: 'string', description: 'Country code' },
+                type: { type: 'string', description: 'Phone type (work, mobile, etc.)' }
+              },
+              additionalProperties: true
+            },
+            description: 'Additional phone numbers'
+          }
+        };
+        property.additionalProperties = true;
         break;
       case 'LINKS':
         property.type = 'object';
