@@ -788,6 +788,21 @@ export class TwentyCRMServer {
       delete sanitized.id;
     }
 
+    // Special handling for Person object: redirect 'emails' to 'eMails' field
+    // to avoid unique constraint issues (emails field requires unique values,
+    // but eMails field allows duplicates)
+    if (schema?.namePlural === 'people' && 'emails' in sanitized) {
+      // If eMails is not already set, copy emails value to eMails
+      if (!('eMails' in sanitized)) {
+        sanitized.eMails = sanitized.emails;
+      }
+      // Clear the emails field to avoid unique constraint violation
+      sanitized.emails = {
+        primaryEmail: '',
+        additionalEmails: null
+      };
+    }
+
     return sanitized;
   }
 

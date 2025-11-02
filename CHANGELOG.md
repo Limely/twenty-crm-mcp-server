@@ -13,6 +13,11 @@
   - Address string → `{ addressStreet1: "...", addressCity: "", ... }`
   - URL string → `{ primaryLinkUrl: "...", primaryLinkLabel: "", secondaryLinks: null }`
 - Added support for converting standard address formats (street1, city, postalCode) to Twenty's format automatically
+- **Person emails auto-redirect**: For Person objects, the `emails` field is automatically redirected to `eMails` field to avoid unique constraint violations
+  - The `emails` field in Twenty CRM requires unique values across all persons
+  - The custom `eMails` field allows duplicate email addresses
+  - When creating or updating a person, any value set in `emails` is automatically copied to `eMails`, and `emails` is cleared
+  - This allows multiple people to share the same email address without constraint errors
 
 ## 0.2.0
 - Added automatic schema discovery (uses `./schema` export by default, still respects `SCHEMA_PATH`)
