@@ -104,6 +104,9 @@ export class TwentyCRMServer {
 
     if (data && ["POST", "PUT", "PATCH"].includes(method)) {
       options.body = JSON.stringify(data);
+      if (this.logLevel === 'verbose' && endpoint.includes('/people/')) {
+        console.error('[DEBUG] Request payload:', JSON.stringify(data, null, 2));
+      }
     }
 
     try {
@@ -234,6 +237,46 @@ export class TwentyCRMServer {
     const pluralKey = schema.namePlural.toLowerCase();
     if (this.objectSchemas.has(pluralKey)) {
       return;
+    }
+
+    // Special handling for Person objects: add custom eMails field
+    if (schema.namePlural === 'people' && schema.properties && !schema.properties.eMails) {
+      schema.properties.eMails = {
+        type: "object",
+        description: "Custom emails field (allows duplicates, unlike standard emails field)",
+        default: { primaryEmail: "", additionalEmails: null },
+        additionalProperties: true,
+        properties: {
+          primaryEmail: { type: "string", description: "Primary email address" },
+          additionalEmails: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+              properties: {
+                value: { type: "string", description: "Email address" },
+                type: { type: "string", description: "Type label or category" },
+                primary: { type: "boolean", description: "Whether this is the primary contact value" }
+              }
+            }
+          }
+        }
+      };
+
+      // Add eMails to fieldMetadata as EMAILS type
+      if (!schema.fieldMetadata) {
+        schema.fieldMetadata = [];
+      }
+      schema.fieldMetadata.push({
+        name: 'eMails',
+        type: 'EMAILS',
+        label: 'E-Mails (Custom)',
+        description: 'Custom emails field that allows duplicate values',
+        isNullable: true,
+        isCustom: true,
+        isSystem: false,
+        defaultValue: { primaryEmail: '', additionalEmails: null }
+      });
     }
 
     this.objectSchemas.set(pluralKey, schema);
@@ -652,6 +695,9 @@ export class TwentyCRMServer {
           throw new Error(`Missing "id" for ${labelSingular} update`);
         }
         const payload = this.sanitizePayload(updateData, schema);
+        if (this.logLevel === 'verbose' && schema?.namePlural === 'people') {
+          console.error('[DEBUG] Update payload for person:', JSON.stringify(payload, null, 2));
+        }
         const updated = await this.makeRequest(`/rest/${endpointName}/${id}`, "PUT", payload);
         return this.buildContent(`Updated ${labelSingular}`, updated);
       }
@@ -766,7 +812,8 @@ export class TwentyCRMServer {
         continue;
       }
 
-      if (emailsFields.has(key)) {
+      // Normalize EMAILS fields (including custom eMails field for Person objects)
+      if (emailsFields.has(key) || key === 'eMails') {
         sanitized[key] = this.normalizeEmailsValue(value);
         continue;
       }
