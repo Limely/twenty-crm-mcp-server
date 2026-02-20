@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.2",
+  "name": "twenty-crm-mcp",
+  "version": "1.0.0",
+  "description": "Twenty CRM MCP Server - Access your Twenty CRM data through Claude",
+  "author": {
+    "name": "Limely",
+    "email": "support@limely.co.uk"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/build/index.js"
+      ],
+      "env": {
+        "REMOTE_MCP_URL": "${user_config.remote_mcp_url}",
+        "TWENTY_API_KEY": "${user_config.twenty_api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "remote_mcp_url": {
+      "type": "string",
+      "title": "Remote MCP Server URL",
+      "description": "The URL of the Twenty CRM MCP server",
+      "required": true,
+      "sensitive": false,
+      "default": "https://crm-mcp.limely.co.uk/sse"
+    },
+    "twenty_api_key": {
+      "type": "string",
+      "title": "Twenty CRM API Key",
+      "description": "Your Twenty CRM API key (from Settings > API & Webhooks)",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "license": "MIT"
+}
