@@ -285,46 +285,6 @@ export class TwentyCRMServer {
       return;
     }
 
-    // Special handling for Person objects: add custom eMails field
-    if (schema.namePlural === 'people' && schema.properties && !schema.properties.eMails) {
-      schema.properties.eMails = {
-        type: "object",
-        description: "Custom emails field (allows duplicates, unlike standard emails field)",
-        default: { primaryEmail: "", additionalEmails: null },
-        additionalProperties: true,
-        properties: {
-          primaryEmail: { type: "string", description: "Primary email address" },
-          additionalEmails: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: true,
-              properties: {
-                value: { type: "string", description: "Email address" },
-                type: { type: "string", description: "Type label or category" },
-                primary: { type: "boolean", description: "Whether this is the primary contact value" }
-              }
-            }
-          }
-        }
-      };
-
-      // Add eMails to fieldMetadata as EMAILS type
-      if (!schema.fieldMetadata) {
-        schema.fieldMetadata = [];
-      }
-      schema.fieldMetadata.push({
-        name: 'eMails',
-        type: 'EMAILS',
-        label: 'E-Mails (Custom)',
-        description: 'Custom emails field that allows duplicate values',
-        isNullable: true,
-        isCustom: true,
-        isSystem: false,
-        defaultValue: { primaryEmail: '', additionalEmails: null }
-      });
-    }
-
     this.objectSchemas.set(pluralKey, schema);
     this.objectAliases.set(pluralKey, pluralKey);
     this.objectAliases.set(schema.nameSingular.toLowerCase(), pluralKey);
@@ -860,8 +820,8 @@ export class TwentyCRMServer {
         continue;
       }
 
-      // Normalize EMAILS fields (including custom eMails field for Person objects)
-      if (emailsFields.has(key) || key === 'eMails') {
+      // Normalize EMAILS fields
+      if (emailsFields.has(key)) {
         sanitized[key] = this.normalizeEmailsValue(value);
         continue;
       }
@@ -881,21 +841,6 @@ export class TwentyCRMServer {
 
     if ("id" in sanitized) {
       delete sanitized.id;
-    }
-
-    // Special handling for Person object: redirect 'emails' to 'eMails' field
-    // to avoid unique constraint issues (emails field requires unique values,
-    // but eMails field allows duplicates)
-    if (schema?.namePlural === 'people' && 'emails' in sanitized) {
-      // If eMails is not already set, copy emails value to eMails
-      if (!('eMails' in sanitized)) {
-        sanitized.eMails = sanitized.emails;
-      }
-      // Clear the emails field to avoid unique constraint violation
-      sanitized.emails = {
-        primaryEmail: '',
-        additionalEmails: null
-      };
     }
 
     return sanitized;

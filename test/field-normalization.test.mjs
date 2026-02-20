@@ -138,8 +138,8 @@ describe('Field Normalization', () => {
     });
   });
 
-  describe('sanitizePayload - emails to eMails redirect for Person', () => {
-    it('should redirect emails to eMails for people object', () => {
+  describe('sanitizePayload - emails for Person', () => {
+    it('should keep emails as-is for people object', () => {
       const personSchema = server.objectSchemas.get('people');
       const payload = {
         name: { firstName: 'Test', lastName: 'User' },
@@ -148,31 +148,26 @@ describe('Field Normalization', () => {
 
       const result = server.sanitizePayload(payload, personSchema);
 
-      // Should have eMails with the email value
-      assert.deepStrictEqual(result.eMails, { primaryEmail: 'test@example.com', additionalEmails: null });
-      // Should have emails cleared to avoid unique constraint
-      assert.deepStrictEqual(result.emails, { primaryEmail: '', additionalEmails: null });
+      // Should keep emails as-is
+      assert.deepStrictEqual(result.emails, { primaryEmail: 'test@example.com', additionalEmails: null });
       // Should keep other fields
       assert.deepStrictEqual(result.name, { firstName: 'Test', lastName: 'User' });
     });
 
-    it('should prefer existing eMails over emails for people object', () => {
+    it('should normalize string email to object format', () => {
       const personSchema = server.objectSchemas.get('people');
       const payload = {
         name: { firstName: 'Test', lastName: 'User' },
-        emails: { primaryEmail: 'old@example.com', additionalEmails: null },
-        eMails: { primaryEmail: 'new@example.com', additionalEmails: null }
+        emails: 'test@example.com'
       };
 
       const result = server.sanitizePayload(payload, personSchema);
 
-      // Should keep the explicit eMails value
-      assert.deepStrictEqual(result.eMails, { primaryEmail: 'new@example.com', additionalEmails: null });
-      // Should clear emails
-      assert.deepStrictEqual(result.emails, { primaryEmail: '', additionalEmails: null });
+      // Should normalize string to object format
+      assert.deepStrictEqual(result.emails, { primaryEmail: 'test@example.com', additionalEmails: null });
     });
 
-    it('should not redirect emails for non-person objects', () => {
+    it('should keep emails as-is for non-person objects', () => {
       const companySchema = server.objectSchemas.get('companies');
       const payload = {
         name: 'Test Company',
@@ -181,10 +176,8 @@ describe('Field Normalization', () => {
 
       const result = server.sanitizePayload(payload, companySchema);
 
-      // Should keep emails as-is for non-person objects
+      // Should keep emails as-is
       assert.deepStrictEqual(result.emails, { primaryEmail: 'test@company.com', additionalEmails: null });
-      // Should not create eMails field
-      assert.strictEqual(result.eMails, undefined);
     });
   });
 });
