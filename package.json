@@ -1,7 +1,7 @@
 {
   "name": "twenty-crm-mcp-server",
-  "version": "0.2.0",
-  "description": "A Model Context Protocol (MCP) server for Twenty CRM integration. Enables natural language interactions with your CRM data through Claude and other AI assistants.",
+  "version": "0.3.0",
+  "description": "A Model Context Protocol (MCP) server for Twenty CRM integration. Supports both local (stdio) and cloud (HTTP/SSE) deployment.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.6.0"
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "engines": {
     "node": ">=18"
@@ -25,16 +25,18 @@
     "assistant",
     "natural-language",
     "api",
-    "integration"
+    "integration",
+    "railway",
+    "cloud"
   ],
   "author": "mhenry3164",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mhenry3164/twenty-crm-mcp-server.git"
+    "url": "https://github.com/Limely/twenty-crm-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/mhenry3164/twenty-crm-mcp-server/issues"
+    "url": "https://github.com/Limely/twenty-crm-mcp-server/issues"
   },
-  "homepage": "https://github.com/mhenry3164/twenty-crm-mcp-server#readme"
+  "homepage": "https://github.com/Limely/twenty-crm-mcp-server#readme"
 }

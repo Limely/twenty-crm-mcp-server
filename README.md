@@ -127,6 +127,25 @@ Use `node index.js --quiet` (or set `MCP_LOG_LEVEL=quiet`) to silence schema rel
 
 5. **Restart Claude Desktop** to load the new server.
 
+### Cloud Deployment (Railway)
+
+Deploy as an HTTP server on Railway or any cloud platform:
+
+1. **Set environment variables on Railway**:
+   - `TWENTY_API_KEY` - Your Twenty CRM API key
+   - `TWENTY_BASE_URL` - Your Twenty CRM URL (e.g., `https://api.twenty.com`)
+   - `MCP_AUTH_TOKEN` - A secret token to protect your MCP endpoint (generate a random string)
+   - `PORT` - Railway sets this automatically
+
+2. **Deploy**: Railway will auto-detect Node.js and run `npm start`. The server switches to HTTP mode when `PORT` is set.
+
+3. **Endpoints**:
+   - `GET /health` - Health check
+   - `GET /sse` - SSE endpoint for MCP connections
+   - `POST /messages` - Message endpoint for MCP
+
+4. **Authentication**: All requests require `Authorization: Bearer YOUR_MCP_AUTH_TOKEN` header.
+
 ---
 
 ## 💬 Usage
@@ -259,6 +278,8 @@ Tools are generated directly from your exported Twenty schema. Core objects (`pe
 
 - `TWENTY_API_KEY` (required): Your Twenty CRM API key
 - `TWENTY_BASE_URL` (optional): Twenty CRM base URL (defaults to `https://api.twenty.com`)
+- `MCP_AUTH_TOKEN` (required for HTTP mode): Secret token to authenticate MCP clients
+- `PORT` (optional): HTTP port; when set, server runs in HTTP mode instead of stdio
 
 ### Custom Fields
 

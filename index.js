@@ -3,8 +3,10 @@
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { createServer } from "http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -1860,6 +1862,91 @@ export class TwentyCRMServer {
     await this.server.connect(transport);
     console.error("Twenty CRM MCP server (optimized) running on stdio");
   }
+
+  async runHttp(port = 3000) {
+    const authToken = process.env.MCP_AUTH_TOKEN;
+    if (!authToken) {
+      throw new Error("MCP_AUTH_TOKEN environment variable is required for HTTP mode");
+    }
+
+    const transports = new Map();
+
+    const httpServer = createServer(async (req, res) => {
+      // CORS headers
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // Auth check
+      const authHeader = req.headers.authorization;
+      if (!authHeader || authHeader !== `Bearer ${authToken}`) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+
+      const url = new URL(req.url, `http://${req.headers.host}`);
+
+      // Health check endpoint
+      if (url.pathname === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", mode: "http" }));
+        return;
+      }
+
+      // SSE endpoint for MCP
+      if (url.pathname === "/sse") {
+        const transport = new SSEServerTransport("/messages", res);
+        transports.set(transport.sessionId, transport);
+
+        res.on("close", () => {
+          transports.delete(transport.sessionId);
+        });
+
+        await this.server.connect(transport);
+        return;
+      }
+
+      // Messages endpoint for MCP
+      if (url.pathname === "/messages") {
+        const sessionId = url.searchParams.get("sessionId");
+        const transport = transports.get(sessionId);
+
+        if (!transport) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid session" }));
+          return;
+        }
+
+        let body = "";
+        req.on("data", chunk => { body += chunk; });
+        req.on("end", async () => {
+          try {
+            await transport.handlePostMessage(req, res, body);
+          } catch (err) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+        return;
+      }
+
+      // 404 for unknown routes
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+    });
+
+    httpServer.listen(port, () => {
+      console.error(`Twenty CRM MCP server running on HTTP port ${port}`);
+      console.error("Endpoints: /sse (SSE), /messages (POST), /health (GET)");
+    });
+  }
 }
 
 function parseCliOptions(argv) {
@@ -1901,5 +1988,15 @@ const isCliEntrypoint = (() => {
 if (isCliEntrypoint) {
   const cliOptions = parseCliOptions(process.argv.slice(2));
   const server = new TwentyCRMServer(cliOptions);
-  server.run().catch(console.error);
+
+  // Use HTTP mode if PORT env var is set (Railway sets this automatically)
+  // or if --http flag is passed
+  const useHttp = process.env.PORT || process.argv.includes("--http");
+
+  if (useHttp) {
+    const port = parseInt(process.env.PORT || "3000", 10);
+    server.runHttp(port).catch(console.error);
+  } else {
+    server.run().catch(console.error);
+  }
 }
