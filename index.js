@@ -9,7 +9,6 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
-import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -1953,19 +1952,53 @@ export class TwentyCRMServer {
       resourceName: "Twenty CRM MCP Server"
     }));
 
-    // Bearer auth middleware for protected endpoints
-    const bearerAuth = requireBearerAuth({
-      verifier: oauthProvider
-    });
+    // Custom auth middleware that supports both OAuth tokens AND direct Twenty API keys
+    const flexibleBearerAuth = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({
+          error: "invalid_token",
+          error_description: "Missing Authorization header"
+        });
+      }
+
+      const token = authHeader.slice(7);
+
+      // First, try OAuth token verification
+      try {
+        const authInfo = await oauthProvider.verifyAccessToken(token);
+        req.auth = authInfo;
+        req.twentyApiKey = authInfo.extra?.twentyApiKey;
+        return next();
+      } catch (oauthError) {
+        // OAuth verification failed, try as direct Twenty API key
+      }
+
+      // Try the token as a direct Twenty CRM API key
+      try {
+        const isValid = await oauthProvider.validateTwentyApiKey(token);
+        if (isValid) {
+          req.twentyApiKey = token;
+          return next();
+        }
+      } catch (apiKeyError) {
+        console.error("API key validation error:", apiKeyError.message);
+      }
+
+      return res.status(401).json({
+        error: "invalid_token",
+        error_description: "Invalid token or API key"
+      });
+    };
 
     // Session storage for SSE transports
     const transports = new Map();
 
     // SSE endpoint for MCP (protected)
-    app.get("/sse", bearerAuth, async (req, res) => {
+    app.get("/sse", flexibleBearerAuth, async (req, res) => {
       try {
-        // Get the user's Twenty API key from the auth context
-        const twentyApiKey = req.auth?.extra?.twentyApiKey;
+        // Get the user's Twenty API key from auth context or direct API key
+        const twentyApiKey = req.twentyApiKey;
         if (!twentyApiKey) {
           return res.status(401).json({ error: "No API key associated with token" });
         }
@@ -1995,7 +2028,7 @@ export class TwentyCRMServer {
     });
 
     // Messages endpoint for MCP (protected)
-    app.post("/messages", bearerAuth, async (req, res) => {
+    app.post("/messages", flexibleBearerAuth, async (req, res) => {
       const sessionId = req.query.sessionId;
       const session = transports.get(sessionId);
 
