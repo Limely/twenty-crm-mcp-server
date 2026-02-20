@@ -28,7 +28,7 @@
       "description": "The URL of the Twenty CRM MCP server",
       "required": true,
       "sensitive": false,
-      "default": "https://crm-mcp.limely.co.uk/sse"
+      "default": "https://crm-mcp.limely.co.uk/stream"
     },
     "twenty_api_key": {
       "type": "string",

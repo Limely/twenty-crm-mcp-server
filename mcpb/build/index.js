@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -28,7 +28,7 @@ class TwentyCRMProxy {
   async createRemoteClient() {
     log.info(`Connecting to remote server: ${this.serverUrl}`);
 
-    const transport = new SSEClientTransport(new URL(this.serverUrl), {
+    const transport = new StreamableHTTPClientTransport(new URL(this.serverUrl), {
       requestInit: {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
