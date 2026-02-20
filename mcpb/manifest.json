@@ -1,6 +1,6 @@
 {
   "manifest_version": "0.2",
-  "name": "twenty-crm-mcp",
+  "name": "Twenty CRM",
   "version": "1.0.0",
   "description": "Twenty CRM MCP Server - Access your Twenty CRM data through Claude",
   "author": {
@@ -28,7 +28,7 @@
       "description": "The URL of the Twenty CRM MCP server",
       "required": true,
       "sensitive": false,
-      "default": "https://crm-mcp.limely.co.uk/sse"
+      "default": "https://crm-mcp.limely.co.uk/stream"
     },
     "twenty_api_key": {
       "type": "string",

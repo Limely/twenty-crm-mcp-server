@@ -5,9 +5,11 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { createServer } from "http";
 import express from "express";
+import { randomUUID } from "crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import {
   CallToolRequestSchema,
@@ -2067,6 +2069,65 @@ export class TwentyCRMServer {
         console.error("Message handling error:", err);
         if (!res.headersSent) {
           res.status(500).json({ error: err.message });
+        }
+      }
+    });
+
+    // Streamable HTTP endpoint (alternative to SSE, preferred for new clients)
+    // Maps session IDs to their transports and API keys
+    const streamSessions = new Map();
+
+    app.all("/stream", flexibleBearerAuth, async (req, res) => {
+      try {
+        const twentyApiKey = req.twentyApiKey;
+        if (!twentyApiKey) {
+          return res.status(401).json({ error: "No API key associated with token" });
+        }
+
+        // Check for existing session
+        const sessionId = req.headers['mcp-session-id'];
+        let session = sessionId ? streamSessions.get(sessionId) : null;
+
+        if (!session) {
+          // Create new session with its own MCP server
+          const mcpServer = this.createMCPServer();
+          this.setupToolHandlers(mcpServer);
+
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+          });
+
+          // Connect the MCP server to the transport
+          await mcpServer.connect(transport);
+
+          session = {
+            transport,
+            mcpServer,
+            twentyApiKey
+          };
+
+          // Store session after we get the session ID from the response
+          transport.onclose = () => {
+            if (transport.sessionId) {
+              streamSessions.delete(transport.sessionId);
+            }
+          };
+        }
+
+        // Set API key for this request
+        this.setRequestApiKey(session.twentyApiKey);
+
+        // Handle the request
+        await session.transport.handleRequest(req, res, req.body);
+
+        // Store session if it's new and we now have a session ID
+        if (session.transport.sessionId && !streamSessions.has(session.transport.sessionId)) {
+          streamSessions.set(session.transport.sessionId, session);
+        }
+      } catch (error) {
+        console.error("Stream endpoint error:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message });
         }
       }
     });
