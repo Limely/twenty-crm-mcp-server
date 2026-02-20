@@ -45,4 +45,4 @@ Thumbs.db
 
 # Temporary folders
 tmp/
-temp/
+temp/node_modules/
