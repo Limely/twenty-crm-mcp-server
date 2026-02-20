@@ -4,14 +4,18 @@ import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { createServer } from "http";
+import express from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { SchemaLoader } from "./schema-loader.js";
+import { TwentyCRMOAuthProvider } from "./oauth/provider.js";
 
 class HttpError extends Error {
   constructor(message, details = {}) {
@@ -63,12 +67,19 @@ export class TwentyCRMServer {
       }
     );
 
+    // In OAuth mode (HTTP), API key comes from the authenticated user's token
+    // In stdio mode, API key comes from environment variable
+    this.oauthMode = options.oauthMode || false;
     this.apiKey = process.env.TWENTY_API_KEY;
     this.baseUrl = process.env.TWENTY_BASE_URL || "https://api.twenty.com";
 
-    if (!this.apiKey) {
+    // Only require API key in non-OAuth mode
+    if (!this.oauthMode && !this.apiKey) {
       throw new Error("TWENTY_API_KEY environment variable is required");
     }
+
+    // Store for per-request API keys in OAuth mode
+    this._requestApiKey = null;
 
     this.schemaLoader = new SchemaLoader();
     const loaded = this.schemaLoader.loadSchemas();
@@ -94,12 +105,33 @@ export class TwentyCRMServer {
     this.setupToolHandlers();
   }
 
+  /**
+   * Set the API key for the current request context (OAuth mode).
+   * @param {string|null} apiKey
+   */
+  setRequestApiKey(apiKey) {
+    this._requestApiKey = apiKey;
+  }
+
+  /**
+   * Get the effective API key for the current request.
+   * @returns {string}
+   */
+  getEffectiveApiKey() {
+    return this._requestApiKey || this.apiKey;
+  }
+
   async makeRequest(endpoint, method = "GET", data = null) {
+    const effectiveApiKey = this.getEffectiveApiKey();
+    if (!effectiveApiKey) {
+      throw new Error("No API key available for request");
+    }
+
     const url = `${this.baseUrl}${endpoint}`;
     const options = {
       method,
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${effectiveApiKey}`,
         "Content-Type": "application/json",
       },
     };
@@ -1864,87 +1896,150 @@ export class TwentyCRMServer {
   }
 
   async runHttp(port = 3000) {
-    const authToken = process.env.MCP_AUTH_TOKEN;
-    if (!authToken) {
-      throw new Error("MCP_AUTH_TOKEN environment variable is required for HTTP mode");
-    }
+    // Enable OAuth mode
+    this.oauthMode = true;
 
-    const transports = new Map();
+    // Determine server URL for OAuth metadata
+    const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
+    const issuerUrl = new URL(serverUrl);
 
-    const httpServer = createServer(async (req, res) => {
-      // CORS headers
+    // Create OAuth provider
+    const oauthProvider = new TwentyCRMOAuthProvider({
+      twentyBaseUrl: this.baseUrl
+    });
+
+    // Periodic cleanup of expired tokens
+    setInterval(() => oauthProvider.cleanup(), 60000);
+
+    const app = express();
+
+    // Parse JSON and URL-encoded bodies
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    // CORS headers for all routes
+    app.use((req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
       if (req.method === "OPTIONS") {
-        res.writeHead(204);
-        res.end();
-        return;
+        return res.sendStatus(204);
       }
+      next();
+    });
 
-      // Auth check
-      const authHeader = req.headers.authorization;
-      if (!authHeader || authHeader !== `Bearer ${authToken}`) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Unauthorized" }));
-        return;
+    // Health check endpoint (public, no auth required)
+    app.get("/health", (req, res) => {
+      res.json({ status: "ok", mode: "oauth" });
+    });
+
+    // Custom authorization submit handler (before mcpAuthRouter)
+    app.post("/authorize/submit", async (req, res) => {
+      try {
+        await oauthProvider.handleAuthorizeSubmit(req, res);
+      } catch (error) {
+        console.error("Authorization submit error:", error);
+        res.status(500).json({ error: "Authorization failed" });
       }
+    });
 
-      const url = new URL(req.url, `http://${req.headers.host}`);
+    // Install MCP OAuth router (handles /.well-known/*, /register, /authorize, /token, /revoke)
+    app.use(mcpAuthRouter({
+      provider: oauthProvider,
+      issuerUrl,
+      baseUrl: issuerUrl,
+      scopesSupported: ["mcp:tools"],
+      resourceName: "Twenty CRM MCP Server"
+    }));
 
-      // Health check endpoint
-      if (url.pathname === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", mode: "http" }));
-        return;
-      }
+    // Bearer auth middleware for protected endpoints
+    const bearerAuth = requireBearerAuth({
+      verifier: oauthProvider
+    });
 
-      // SSE endpoint for MCP
-      if (url.pathname === "/sse") {
+    // Session storage for SSE transports
+    const transports = new Map();
+
+    // SSE endpoint for MCP (protected)
+    app.get("/sse", bearerAuth, async (req, res) => {
+      try {
+        // Get the user's Twenty API key from the auth context
+        const twentyApiKey = req.auth?.extra?.twentyApiKey;
+        if (!twentyApiKey) {
+          return res.status(401).json({ error: "No API key associated with token" });
+        }
+
         const transport = new SSEServerTransport("/messages", res);
-        transports.set(transport.sessionId, transport);
+
+        // Store the API key with the session
+        transports.set(transport.sessionId, {
+          transport,
+          twentyApiKey
+        });
 
         res.on("close", () => {
           transports.delete(transport.sessionId);
         });
 
+        // Set API key for this session
+        this.setRequestApiKey(twentyApiKey);
+
         await this.server.connect(transport);
-        return;
-      }
-
-      // Messages endpoint for MCP
-      if (url.pathname === "/messages") {
-        const sessionId = url.searchParams.get("sessionId");
-        const transport = transports.get(sessionId);
-
-        if (!transport) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Invalid session" }));
-          return;
+      } catch (error) {
+        console.error("SSE connection error:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: error.message });
         }
-
-        let body = "";
-        req.on("data", chunk => { body += chunk; });
-        req.on("end", async () => {
-          try {
-            await transport.handlePostMessage(req, res, body);
-          } catch (err) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: err.message }));
-          }
-        });
-        return;
       }
-
-      // 404 for unknown routes
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
     });
 
-    httpServer.listen(port, () => {
-      console.error(`Twenty CRM MCP server running on HTTP port ${port}`);
-      console.error("Endpoints: /sse (SSE), /messages (POST), /health (GET)");
+    // Messages endpoint for MCP (protected)
+    app.post("/messages", bearerAuth, async (req, res) => {
+      const sessionId = req.query.sessionId;
+      const session = transports.get(sessionId);
+
+      if (!session) {
+        return res.status(400).json({ error: "Invalid session" });
+      }
+
+      // Set the API key for this request
+      this.setRequestApiKey(session.twentyApiKey);
+
+      try {
+        await session.transport.handlePostMessage(req, res);
+      } catch (err) {
+        console.error("Message handling error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: err.message });
+        }
+      }
+    });
+
+    // 404 handler
+    app.use((req, res) => {
+      res.status(404).json({ error: "Not found" });
+    });
+
+    // Error handler
+    app.use((err, req, res, next) => {
+      console.error("Server error:", err);
+      res.status(500).json({ error: err.message });
+    });
+
+    app.listen(port, () => {
+      console.error(`Twenty CRM MCP server running on HTTP port ${port} (OAuth enabled)`);
+      console.error(`Server URL: ${serverUrl}`);
+      console.error("OAuth endpoints:");
+      console.error("  - /.well-known/oauth-authorization-server (metadata)");
+      console.error("  - /.well-known/oauth-protected-resource (resource metadata)");
+      console.error("  - /register (dynamic client registration)");
+      console.error("  - /authorize (authorization)");
+      console.error("  - /token (token exchange)");
+      console.error("MCP endpoints:");
+      console.error("  - /sse (SSE connection, protected)");
+      console.error("  - /messages (POST messages, protected)");
+      console.error("  - /health (health check, public)");
     });
   }
 }
@@ -1987,11 +2082,17 @@ const isCliEntrypoint = (() => {
 
 if (isCliEntrypoint) {
   const cliOptions = parseCliOptions(process.argv.slice(2));
-  const server = new TwentyCRMServer(cliOptions);
 
   // Use HTTP mode if PORT env var is set (Railway sets this automatically)
   // or if --http flag is passed
   const useHttp = process.env.PORT || process.argv.includes("--http");
+
+  // In HTTP mode, enable OAuth (API key comes from user during auth flow)
+  if (useHttp) {
+    cliOptions.oauthMode = true;
+  }
+
+  const server = new TwentyCRMServer(cliOptions);
 
   if (useHttp) {
     const port = parseInt(process.env.PORT || "3000", 10);
