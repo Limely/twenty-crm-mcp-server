@@ -54,17 +54,6 @@ function cloneSchema(value) {
 export class TwentyCRMServer {
   constructor(options = {}) {
     this.options = options;
-    this.server = new Server(
-      {
-        name: "twenty-crm",
-        version: "0.2.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
 
     // In OAuth mode (HTTP), API key comes from the authenticated user's token
     // In stdio mode, API key comes from environment variable
@@ -101,7 +90,29 @@ export class TwentyCRMServer {
       ["create_note_for_person", async (args = {}) => this.createNoteForPerson(args)]
     ]);
 
-    this.setupToolHandlers();
+    // For stdio mode, create single server instance
+    // For HTTP mode, we create per-connection instances in runHttp()
+    if (!this.oauthMode) {
+      this.server = this.createMCPServer();
+      this.setupToolHandlers(this.server);
+    }
+  }
+
+  /**
+   * Create a new MCP Server instance (for per-connection use in HTTP mode)
+   */
+  createMCPServer() {
+    return new Server(
+      {
+        name: "twenty-crm",
+        version: "0.2.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
+      }
+    );
   }
 
   /**
@@ -667,13 +678,15 @@ export class TwentyCRMServer {
     return tools;
   }
 
-  setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+  setupToolHandlers(server) {
+    const mcpServer = server || this.server;
+
+    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       this.refreshSchemaIfChanged();
       return { tools: this.tools };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       this.refreshSchemaIfChanged();
       const { name } = request.params;
       const args = request.params.arguments ?? {};
@@ -1991,8 +2004,8 @@ export class TwentyCRMServer {
       });
     };
 
-    // Session storage for SSE transports
-    const transports = new Map();
+    // Session storage for SSE transports (each session gets its own MCP server)
+    const sessions = new Map();
 
     // SSE endpoint for MCP (protected)
     app.get("/sse", flexibleBearerAuth, async (req, res) => {
@@ -2003,22 +2016,31 @@ export class TwentyCRMServer {
           return res.status(401).json({ error: "No API key associated with token" });
         }
 
+        // Create a new MCP server for this connection
+        const mcpServer = this.createMCPServer();
+        this.setupToolHandlers(mcpServer);
+
         const transport = new SSEServerTransport("/messages", res);
 
-        // Store the API key with the session
-        transports.set(transport.sessionId, {
+        // Store the session with its own server instance
+        sessions.set(transport.sessionId, {
           transport,
+          mcpServer,
           twentyApiKey
         });
 
         res.on("close", () => {
-          transports.delete(transport.sessionId);
+          const session = sessions.get(transport.sessionId);
+          if (session?.mcpServer) {
+            session.mcpServer.close?.();
+          }
+          sessions.delete(transport.sessionId);
         });
 
         // Set API key for this session
         this.setRequestApiKey(twentyApiKey);
 
-        await this.server.connect(transport);
+        await mcpServer.connect(transport);
       } catch (error) {
         console.error("SSE connection error:", error);
         if (!res.headersSent) {
@@ -2030,7 +2052,7 @@ export class TwentyCRMServer {
     // Messages endpoint for MCP (protected)
     app.post("/messages", flexibleBearerAuth, async (req, res) => {
       const sessionId = req.query.sessionId;
-      const session = transports.get(sessionId);
+      const session = sessions.get(sessionId);
 
       if (!session) {
         return res.status(400).json({ error: "Invalid session" });
