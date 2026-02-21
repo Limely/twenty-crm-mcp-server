@@ -12,40 +12,65 @@ Twenty CRM MCP Server is a Model Context Protocol (MCP) server that connects Twe
 - Live schema reloading without server restart
 - Relation field aliasing (e.g., `companyId` instead of nested objects)
 - Advanced search across multiple object types
-- GraphQL operation introspection
+- OAuth 2.0 with PKCE for Claude.ai integration
+- Streamable HTTP and SSE transport support
+- Desktop extension (mcpb) for Claude Desktop
+
+## Deployment Modes
+
+### 1. Local stdio (Claude Desktop with mcpb)
+Install the `twenty-crm-X.X.X.mcpb` extension in Claude Desktop. Users enter their Twenty CRM API key during installation.
+
+### 2. Remote HTTP (Railway/Cloud)
+Deploy to Railway or any cloud platform. Supports:
+- `/stream` - Streamable HTTP endpoint (recommended)
+- `/sse` - SSE endpoint (legacy)
+- OAuth 2.0 for per-user authentication
+
+## Available Tools
+
+**People** - `create_person`, `get_person`, `update_person`, `list_people`, `delete_person`
+
+**Companies** - `create_company`, `get_company`, `update_company`, `list_companies`, `delete_company`
+
+**Notes** - `create_note`, `get_note`, `update_note`, `list_notes`, `delete_note`
+
+**Tasks** - `create_task`, `get_task`, `update_task`, `list_tasks`, `delete_task`
+
+**Opportunities** - `create_opportunity`, `get_opportunity`, `update_opportunity`, `list_opportunities`, `delete_opportunity`
+
+**Note Targets** - `create_noteTarget`, `get_noteTarget`, `update_noteTarget`, `list_noteTargets`, `delete_noteTarget`
+
+**Special Tools:**
+- `search_records` - Search across multiple object types
+- `create_note_for_person` - Create note and link to person in one step
+- `get_metadata_objects` - List available CRM objects
+- `get_object_metadata` - Inspect object schema
+- `get_local_object_schema` - Get tool schema for an object
+- `get_available_operations` - List GraphQL operations
 
 ## Development Commands
 
-### Run the server
+### Run locally (stdio mode)
 ```bash
-node index.js
+TWENTY_API_KEY=your-key node index.js
 ```
 
-### Run with logging options
+### Run HTTP server (OAuth mode)
 ```bash
-# Quiet mode (suppress schema reload logs)
-node index.js --quiet
-# OR
-MCP_LOG_LEVEL=quiet node index.js
+PORT=3000 SERVER_URL=https://your-domain.com node index.js
+```
 
-# Verbose mode (extra debug info)
-node index.js --verbose
-# OR
-MCP_LOG_LEVEL=verbose node index.js
+### Build mcpb extension
+```bash
+cd mcpb
+npm install
+zip -r ../twenty-crm-X.X.X.mcpb manifest.json package.json build/ node_modules/
 ```
 
 ### Testing
 ```bash
-# Run all tests
 npm test
-
-# Run tests with node's test runner directly
-node --test
-```
-
-### Install dependencies
-```bash
-npm install
 ```
 
 ## Architecture
@@ -54,121 +79,116 @@ npm install
 
 **index.js - TwentyCRMServer class**
 - Main MCP server implementation using `@modelcontextprotocol/sdk`
-- Handles tool registration, request routing, and HTTP communication with Twenty CRM REST API
-- Implements CRUD operations (create, get, update, list, delete) for all active objects
-- Manages dynamic schema registry with alias resolution
-- Provides specialized tools: `search_records`, `create_note_for_person`, metadata inspection tools
+- Supports stdio, SSE, and Streamable HTTP transports
+- Creates per-connection MCP server instances in HTTP mode
+- Flexible auth: OAuth tokens or direct API keys
+
+**oauth/provider.js - TwentyCRMOAuthProvider**
+- Implements OAuth 2.0 with PKCE for Claude.ai integration
+- Per-user API key storage (users enter their own key during auth)
+- Dynamic client registration support
+- Token management with refresh support
+
+**oauth/authorize-page.js**
+- HTML authorization page for API key entry
+- Validates API keys against Twenty CRM before accepting
+
+**mcpb/ - Desktop Extension**
+- Local proxy for Claude Desktop
+- Connects to remote server with user's API key
+- Uses Streamable HTTP transport
 
 **schema-loader.js - SchemaLoader class**
-- Loads and parses Twenty CRM schema exports from `./schema` directory
-- Watches `rest-metadata-objects.json` and `available-operations.json` for changes
-- Generates JSON Schema tool definitions from Twenty field metadata
-- Maps Twenty field types to JSON Schema types with proper constraints
-- Creates relation field aliases (`companyId`, `noteTargetsIds`, etc.)
+- Loads Twenty CRM schema exports from `./schema` directory
+- Generates JSON Schema tool definitions
+- Creates relation field aliases
 
-### Schema Discovery Flow
+### HTTP Endpoints
 
-1. **Initialization**: SchemaLoader attempts to load from `./schema` directory (or `SCHEMA_PATH` env var)
-2. **Metadata Parsing**: Parses `rest-metadata-objects.json` to discover active objects and fields
-3. **Schema Generation**: For each active object, generates:
-   - Properties map with proper types, descriptions, and validations
-   - Required fields list (non-nullable fields without defaults)
-   - Relation metadata with cardinality and target info
-   - Friendly relation aliases (e.g., `company` relation → `companyId` alias)
-4. **Tool Registration**: Creates 5 CRUD tools per object (create, get, update, list, delete)
-5. **Live Reload**: On each tool request, checks file modification times and reloads if changed
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `/health` | No | Health check |
+| `/.well-known/oauth-authorization-server` | No | OAuth metadata |
+| `/.well-known/oauth-protected-resource` | No | Resource metadata |
+| `/register` | No | Dynamic client registration |
+| `/authorize` | No | OAuth authorization (shows API key form) |
+| `/token` | No | Token exchange |
+| `/stream` | Bearer | Streamable HTTP MCP endpoint |
+| `/sse` | Bearer | SSE MCP endpoint |
+| `/messages` | Bearer | SSE message endpoint |
 
-### Relation Handling
+### Authentication Flow
 
-The server transforms relation fields to provide a better API experience:
+**OAuth (Claude.ai web):**
+1. Claude.ai discovers OAuth metadata
+2. Registers as client via `/register`
+3. User authorizes at `/authorize`, enters API key
+4. Token exchanged, stored with user's API key
+5. Subsequent requests use Bearer token
 
-**Many-to-One / One-to-One relations:**
-- Original: `{ company: { id: "abc" } }`
-- Alias: `companyId: "abc"` (string)
+**Direct API Key (mcpb/proxy):**
+1. User enters API key in Claude Desktop extension
+2. Proxy connects to `/stream` with API key as Bearer token
+3. Server validates key against Twenty CRM
 
-**One-to-Many / Many-to-Many relations:**
-- Original: `{ noteTargets: [{ id: "x" }, { id: "y" }] }`
-- Alias: `noteTargetsIds: ["x", "y"]` (array of strings)
+## Environment Variables
 
-The `sanitizePayload` method in index.js:714-767 handles bidirectional conversion, accepting either format.
+**For stdio mode:**
+- `TWENTY_API_KEY`: Twenty CRM API key (required)
+- `TWENTY_BASE_URL`: CRM instance URL (default: `https://api.twenty.com`)
 
-### Error Handling
+**For HTTP/OAuth mode:**
+- `PORT`: Server port (Railway sets automatically)
+- `SERVER_URL`: Public URL for OAuth redirects
+- `TWENTY_BASE_URL`: CRM instance URL
 
-`HttpError` class (index.js:14-25) captures full HTTP response details. The `getErrorHint` method (index.js:963-985) provides contextual hints for common HTTP status codes (400, 401, 404, 422, 429, 500).
-
-### Special Tools
-
-**create_note_for_person** (index.js:1128-1182)
-- Orchestrates note creation + noteTarget link creation in a single call
-- Accepts `personId`, `note` object, optional `companyId`, and `targets` array
-- Creates note first, then creates noteTarget records for each target
-- Deduplicates targets to avoid duplicate links
-
-**search_records** (index.js:1280-1333)
-- Multi-object search with weighted prioritization
-- Accepts array of strings or objects with `{ name, limit, weight }`
-- Higher weight = searched first
-- Returns results keyed by object type with error details for failures
+**Optional:**
+- `SCHEMA_PATH`: Custom schema directory (default: `./schema`)
+- `MCP_LOG_LEVEL`: Logging verbosity (`quiet`, `verbose`)
 
 ## Schema Export Structure
 
 The `./schema` directory contains:
-- **rest-metadata-objects.json**: Complete object and field metadata from Twenty CRM
-- **available-operations.json**: GraphQL introspection query results (queries/mutations)
-- **core-objects/**: Individual JSON files for core objects (person, company, task, etc.)
-
-The server prefers local schema files but falls back to API metadata endpoints if unavailable.
-
-## Environment Variables
-
-**Required:**
-- `TWENTY_API_KEY`: Twenty CRM API key (from Settings → API & Webhooks)
-
-**Optional:**
-- `TWENTY_BASE_URL`: Twenty CRM instance URL (default: `https://api.twenty.com`)
-- `SCHEMA_PATH`: Custom schema export directory path (default: `./schema`)
-- `MCP_LOG_LEVEL`: Logging verbosity (`quiet`, `verbose`)
+- **rest-metadata-objects.json**: Object and field metadata from Twenty CRM
+- **available-operations.json**: GraphQL introspection results
+- **core-objects/**: Individual JSON files for core objects
 
 ## Testing Strategy
 
-Tests use Node's built-in test runner (`node:test`) with fixtures. See `test/relations.test.mjs`:
+Tests use Node's built-in test runner (`node:test`):
+- **Schema generation tests**: Verify relation aliases
+- **Payload sanitization tests**: Ensure field normalization
+- **Integration tests**: Mock fetch for end-to-end testing
 
-- **Schema generation tests**: Verify relation aliases are created correctly
-- **Payload sanitization tests**: Ensure relation objects are normalized to ID/Ids aliases
-- **Integration tests**: Mock `globalThis.fetch` to test end-to-end tool orchestration
+```bash
+# Run all tests
+npm test
 
-When writing new tests:
-- Set `TWENTY_API_KEY` and `TWENTY_BASE_URL` to test values
-- Point `SCHEMA_PATH` to the fixture schema directory
-- Mock fetch for HTTP tests to avoid external dependencies
-- Use `{ quiet: true }` option when instantiating TwentyCRMServer to suppress logs
+# Use { oauthMode: true, quiet: true } when instantiating for tests
+```
 
 ## Key Design Patterns
 
-**Fallback Registry**: If schema files are missing, the server registers tools for core objects (people, companies, notes, tasks, opportunities, noteTargets) with minimal schemas to keep basic functionality available.
+**Per-Connection Servers**: In HTTP mode, each SSE/Stream connection gets its own MCP Server instance to avoid "already connected" errors.
 
-**Clone Schema Utility** (index.js:35-47): Deep clones objects using `structuredClone` when available, falling back to JSON serialization. Used to prevent mutation of cached schemas.
+**Flexible Auth Middleware**: Accepts both OAuth tokens and direct API keys, trying OAuth first then falling back to API key validation.
 
-**Alias Resolution** (index.js:714-731): The `resolveObject` method normalizes input (plural/singular/label) to a canonical plural key, allowing flexible object name references.
+**Relation Aliasing**: Transforms `{ company: { id: "abc" } }` to `companyId: "abc"` for cleaner API.
 
-**Pagination Extraction** (index.js:1447-1477): Adaptively extracts pagination metadata from various response formats (pageInfo, meta, top-level keys).
+**Field Normalization**: Converts string emails/phones to proper object structures.
 
-## Common Modification Scenarios
+## Common Modifications
 
-**Adding a new field type mapping:**
-1. Add the Twenty field type to `mapFieldType` in schema-loader.js:466-498
-2. If complex (like ADDRESS, CURRENCY), add structured schema in `buildFieldProperty` (schema-loader.js:239-396)
+**Adding a new tool:**
+1. Define schema in `buildGlobalTools()`
+2. Add handler to `globalToolHandlers` Map
+3. Implement handler method
 
-**Adding a new specialized tool:**
-1. Define the tool schema in `buildGlobalTools` (index.js:457-592)
-2. Register handler in `globalToolHandlers` Map (index.js:83-90)
-3. Implement handler method following the pattern of `createNoteForPerson`
+**Updating mcpb:**
+1. Modify files in `mcpb/`
+2. Update version in `mcpb/manifest.json` and `mcpb/package.json`
+3. Rebuild: `cd mcpb && zip -r ../twenty-crm-X.X.X.mcpb ...`
 
-**Modifying CRUD behavior:**
-1. Edit `handleCRUDOperation` (index.js:625-712)
-2. Update `sanitizePayload` if payload transformation is needed
-3. Adjust `buildListPayload` for list operation response formatting
-
-**Changing relation alias format:**
-1. Modify `getRelationAlias` in schema-loader.js:500-526
-2. Update tests in test/relations.test.mjs to match new format
+**Changing OAuth behavior:**
+1. Modify `oauth/provider.js`
+2. Update `oauth/authorize-page.js` for UI changes
